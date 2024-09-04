@@ -15,28 +15,35 @@
 
 ::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
 @echo off
-:: Set source branch and target branch
 
+:: Check if in git repo
+if not exist .git (
+    echo Not a Git repository. Quitting.
+    exit /b
+)
+
+:: Set source branch and target branch
 set SOURCE=%1 
 set TARGET=%2
 
+echo Source branch: %SOURCE%
 :: Check if source and target branches are provided
-if "%SOURCE%"=="" (
+if "%SOURCE%"=="" EQU "%SOURCE%"==" " (
     echo Source branch is not provided.
     exit /b
 )
 
 :: if target branch is not provided, use current branch as target branch
 setlocal EnableDelayedExpansion
-if "%TARGET%"=="" ( 
-    echo Target branch is not provided. Using current branch as target branch:
+if "%TARGET%"=="" EQU "%TARGET%"==" " ( 
+    echo Target branch is not provided. Using current branch as target.
     for /f %%a in ('git branch --show-current') do (
         set TARGET=%%a
     )
 )
 endlocal & set TARGET=%TARGET%
 
-echo %TARGET%
+echo Target branch: %TARGET%
 
 :: making sure everything is up to date
 git fetch --prune
