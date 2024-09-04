@@ -28,14 +28,25 @@ set TARGET=%2
 
 echo Source branch: %SOURCE%
 :: Check if source and target branches are provided
-if "%SOURCE%"=="" EQU "%SOURCE%"==" " (
+if "%SOURCE%"=="" (
+    echo Source branch is not provided.
+    exit /b
+)
+
+if "%SOURCE%"==" " (
     echo Source branch is not provided.
     exit /b
 )
 
 :: if target branch is not provided, use current branch as target branch
 setlocal EnableDelayedExpansion
-if "%TARGET%"=="" EQU "%TARGET%"==" " ( 
+if "%TARGET%"==""  ( 
+    echo Target branch is not provided. Using current branch as target.
+    for /f %%a in ('git branch --show-current') do (
+        set TARGET=%%a
+    )
+)
+if "%TARGET%"==" " ( 
     echo Target branch is not provided. Using current branch as target.
     for /f %%a in ('git branch --show-current') do (
         set TARGET=%%a
