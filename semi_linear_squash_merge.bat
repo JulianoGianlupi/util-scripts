@@ -67,6 +67,8 @@ git pull
 
 :: rebase source branch on top of target branch
 git rebase %TARGET%
+git push --force-with-lease
+
 git checkout %TARGET%
 
 :: --squash and --no-ff are incompatible, so we do a two-step merge
@@ -87,6 +89,7 @@ echo %INTERMEDIARY%
 git checkout -b %INTERMEDIARY%
 git merge --squash %SOURCE%
 git commit --no-edit
+git push --set-upstream origin %INTERMEDIARY%
 
 
 :: merge intermediary branch into target branch
