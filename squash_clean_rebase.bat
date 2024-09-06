@@ -17,12 +17,12 @@ set SB=%1
 
 :: check if SB is provided
 if "%SB%"=="" (
-    echo Bissected commit is not provided.
+    echo Compare branch is not provided.
     exit /b
 )
 
 if "%SB%"==" " (
-    echo Bissected commit is not provided.
+    echo Compare branch is not provided.
     exit /b
 )
 
