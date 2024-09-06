@@ -96,3 +96,7 @@ git push --set-upstream origin %INTERMEDIARY%
 git checkout %TARGET%
 git merge --no-ff --no-edit %INTERMEDIARY%
 
+:: clean up intermediary branch
+git branch -d %INTERMEDIARY%
+git push -d origin  %INTERMEDIARY%
+
