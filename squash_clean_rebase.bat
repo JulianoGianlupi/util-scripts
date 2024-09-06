@@ -65,3 +65,6 @@ git checkout %CB%
 git reset --hard %NB%
 git push --force-with-lease
 
+:: clean up
+git branch -D %NB%
+
