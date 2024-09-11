@@ -56,6 +56,11 @@ endlocal & set TARGET=%TARGET%
 
 echo Target branch: %TARGET%
 
+if "%SOURCE%" == "%TARGET%" (
+    echo Source and target branches are the same. Quitting.
+    exit /b
+)
+
 :: making sure everything is up to date
 git fetch --prune
 
@@ -89,14 +94,19 @@ echo %INTERMEDIARY%
 git checkout -b %INTERMEDIARY%
 git merge --squash %SOURCE%
 git commit --no-edit
-git push --set-upstream origin %INTERMEDIARY%
+@REM git push --set-upstream origin %INTERMEDIARY%
+
+:: reset source branch to intermediary branch
+git checkout %SOURCE%
+git reset --hard %INTERMEDIARY%
+git push --force-with-lease
 
 
 :: merge intermediary branch into target branch
 git checkout %TARGET%
-git merge --no-ff --no-edit %INTERMEDIARY%
+git merge --no-ff --no-edit %SOURCE%
 
 :: clean up intermediary branch
-git branch -d %INTERMEDIARY%
-git push -d origin  %INTERMEDIARY%
+git branch -D %INTERMEDIARY%
+@REM git push -d origin  %INTERMEDIARY%
 
