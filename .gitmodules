@@ -1,0 +1,3 @@
+[submodule "git-rebase-via-merge"]
+	path = git-rebase-via-merge
+	url = git@github.com:JulianoGianlupi/git-rebase-via-merge.git
