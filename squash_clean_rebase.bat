@@ -63,7 +63,7 @@ git rebase %SB%
 :: reset CB to NB
 git checkout %CB%
 git reset --hard %NB%
-git push --force-with-lease
+@REM git push --force-with-lease
 
 :: clean up
 git branch -D %NB%
