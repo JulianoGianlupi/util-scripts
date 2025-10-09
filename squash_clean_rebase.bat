@@ -48,23 +48,29 @@ for /f %%a in ('git merge-base %CB% %SB%') do (
 )
 endlocal & set ANCESTOR=%ANCESTOR%
 
-git checkout %ANCESTOR%
+echo "Checkout common ancestor commit"
+git checkout -q %ANCESTOR%
 
 :: create new branch from common ancestor
+echo "create new temp branch from common ancestor"
 git checkout -b %NB%
 
 :: squash commits from CB into a single commit
-git merge --squash %CB%
+echo "squash commits from orig branch into a single commit"
+git merge --quiet --squash %CB%
 git commit --no-edit
 
 :: rebase NB onto SB
-git rebase %SB%
+echo "rebase onto target branch"
+git rebase --quiet %SB%
 
 :: reset CB to NB
+echo "reset original branch to temp branch"
 git checkout %CB%
 git reset --hard %NB%
 @REM git push --force-with-lease
 
 :: clean up
+echo "remove temp branch"
 git branch -D %NB%
 
