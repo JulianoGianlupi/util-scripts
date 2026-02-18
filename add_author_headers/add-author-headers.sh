@@ -11,4 +11,4 @@ if [[ ! -f "$PYTHON_SCRIPT" ]]; then
 fi
 
 # Execute Python script with all arguments
-python3 "$PYTHON_SCRIPT" "$@"
+python "$PYTHON_SCRIPT" "$@"
