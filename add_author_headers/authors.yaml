@@ -1,0 +1,13 @@
+# Author templates for normalizing git identities
+# This is a global configuration file that travels with the script
+
+authors:
+  jferrarigian@unither.com:
+    name: Juliano Gianlupi
+    email: jferrarigian@unither.com
+    note: "Copyright: United Therapeutic Corp."
+
+# Bot emails to exclude from authorship
+bots:
+  - "41898282+github-actions[bot]@users.noreply.github.com"
+  - noreply@github.com
