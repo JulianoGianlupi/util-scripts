@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Add author headers to source files based on git blame analysis.
 
@@ -7,18 +6,14 @@ author (contributor of most substantive lines) and adds standardized comment hea
 """
 
 import argparse
+import configparser
 import os
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
-try:
-    import yaml
-except ImportError:
-    print("Error: PyYAML is required. Install with: pip install pyyaml", file=sys.stderr)
-    sys.exit(1)
+import yaml
 
 
 @dataclass
@@ -63,6 +58,49 @@ def find_git_root(start_path: str) -> Optional[str]:
     return None
 
 
+def get_submodule_paths(repo_root: str) -> set[Path]:
+    """
+    Detect git submodules in the repository.
+
+    Parses .gitmodules file to find all submodule paths.
+
+    Args:
+        repo_root: Root directory of the git repository
+
+    Returns:
+        Set of Path objects pointing to submodule directories
+    """
+    gitmodules_path = os.path.join(repo_root, '.gitmodules')
+
+    # Return empty set if no submodules file exists
+    if not os.path.exists(gitmodules_path):
+        return set()
+
+    submodule_paths: set[Path] = set()
+
+    try:
+        config = configparser.ConfigParser()
+        config.read(gitmodules_path, encoding='utf-8')
+
+        for section in config.sections():
+            if section.startswith('submodule'):
+                try:
+                    relative_path = config.get(section, 'path')
+                    # Convert to absolute Path object
+                    absolute_path = Path(repo_root) / relative_path
+                    submodule_paths.add(absolute_path.resolve())
+                except (configparser.NoOptionError, ValueError):
+                    # Skip malformed submodule entries
+                    continue
+
+    except Exception as e:
+        # If .gitmodules is malformed, log warning and continue without filtering
+        print(f"Warning: Could not parse .gitmodules: {e}", file=sys.stderr)
+        return set()
+
+    return submodule_paths
+
+
 def load_yaml_config(yaml_path: str) -> tuple[dict[str, AuthorInfo], set[str]]:
     """
     Load a single YAML config file.
@@ -83,9 +121,8 @@ def load_yaml_config(yaml_path: str) -> tuple[dict[str, AuthorInfo], set[str]]:
     templates = {}
     for email, info in config.get('authors', {}).items():
         templates[email] = AuthorInfo(
-            name=info.get('name', email.split('@')[0]),
-            email=info.get('email'),
-            note=info.get('note')
+            name=info.get('name',
+                          email.split('@')[0]), email=info.get('email'), note=info.get('note')
         )
 
     # Parse bots
@@ -112,14 +149,10 @@ def load_author_templates(script_dir: str, repo_root: str) -> tuple[dict[str, Au
         Tuple of (merged author_templates dict, merged bot_emails set)
     """
     # Load global config (next to script)
-    global_templates, global_bots = load_yaml_config(
-        os.path.join(script_dir, "authors.yaml")
-    )
+    global_templates, global_bots = load_yaml_config(os.path.join(script_dir, "authors.yaml"))
 
     # Load project config (repo root)
-    project_templates, project_bots = load_yaml_config(
-        os.path.join(repo_root, "authors.yaml")
-    )
+    project_templates, project_bots = load_yaml_config(os.path.join(repo_root, "authors.yaml"))
 
     # Merge: project overrides global
     merged_templates = {**global_templates, **project_templates}
@@ -141,11 +174,7 @@ def get_author_name_from_git(email: str, repo_root: str) -> str:
     """
     try:
         cmd = ["git", "log", "--author", email, "--format=%an", "-1"]
-        result = subprocess.run(
-            cmd, capture_output=True, text=True,
-            encoding='utf-8', check=True,
-            cwd=repo_root
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', check=True, cwd=repo_root)
         name = result.stdout.strip()
         return name if name else email.split('@')[0]
     except:
@@ -200,11 +229,8 @@ def parse_git_blame(filepath: str, bot_emails: set[str]) -> dict[str, int]:
     return author_lines
 
 
-def determine_primary_author(
-    author_lines: dict[str, int],
-    templates: dict[str, AuthorInfo],
-    repo_root: str
-) -> Optional[AuthorInfo]:
+def determine_primary_author(author_lines: dict[str, int], templates: dict[str, AuthorInfo],
+                             repo_root: str) -> Optional[AuthorInfo]:
     """
     Select primary author based on line contributions.
 
@@ -302,12 +328,7 @@ def insert_header(filepath: str, header: str, dry_run: bool = True) -> bool:
     return True
 
 
-def analyze_file(
-    filepath: str,
-    templates: dict[str, AuthorInfo],
-    bot_emails: set[str],
-    repo_root: str
-) -> FileAnalysis:
+def analyze_file(filepath: str, templates: dict[str, AuthorInfo], bot_emails: set[str], repo_root: str) -> FileAnalysis:
     """
     Analyze a single source file for authorship.
 
@@ -366,12 +387,10 @@ def analyze_file(
         )
 
 
-def process_files(
-    directory: str,
-    extensions: list[str],
-    script_dir: str,
-    dry_run: bool = True
-) -> tuple[list[FileAnalysis], list[FileAnalysis]]:
+def process_files(directory: str,
+                  extensions: list[str],
+                  script_dir: str,
+                  dry_run: bool = True) -> tuple[list[FileAnalysis], list[FileAnalysis]]:
     """
     Process all source files with specified extensions in directory.
 
@@ -396,13 +415,20 @@ def process_files(
     # Load author templates from YAML
     templates, bot_emails = load_author_templates(script_dir, repo_root)
 
-    # Discover all source files matching extensions
+    # Get submodule paths to skip
+    submodule_paths = get_submodule_paths(repo_root)
+
+    # Discover all source files matching extensions (skip submodules)
     all_files: list[str] = []
     dir_path = Path(directory)
     if dir_path.exists() and dir_path.is_dir():
         for ext in extensions:
             pattern = f"*.{ext}"
-            all_files.extend(str(p) for p in dir_path.rglob(pattern))
+            for p in dir_path.rglob(pattern):
+                # Skip files within submodule directories
+                p_resolved = p.resolve()
+                if not any(submodule in p_resolved.parents for submodule in submodule_paths):
+                    all_files.append(str(p))
 
     # Analyze each file
     for filepath in sorted(all_files):
@@ -501,14 +527,9 @@ def main() -> int:
     Returns:
         Exit code: 0 success, 1 failure
     """
-    parser = argparse.ArgumentParser(
-        description="Add author headers to source files based on git blame"
-    )
+    parser = argparse.ArgumentParser(description="Add author headers to source files based on git blame")
     parser.add_argument(
-        'directory',
-        nargs='?',
-        default='.',
-        help='Directory to traverse for source files (default: current directory)'
+        'directory', nargs='?', default='.', help='Directory to traverse for source files (default: current directory)'
     )
     parser.add_argument(
         '--extensions',
@@ -517,16 +538,8 @@ def main() -> int:
         default=['py', 'jl', 'java', 'cpp', 'c'],
         help='File extensions to process without dots (default: py jl java cpp c)'
     )
-    parser.add_argument(
-        "--apply",
-        action="store_true",
-        help="Actually modify files (default is dry-run preview)"
-    )
-    parser.add_argument(
-        "--verbose",
-        action="store_true",
-        help="Show detailed per-file analysis"
-    )
+    parser.add_argument("--apply", action="store_true", help="Actually modify files (default is dry-run preview)")
+    parser.add_argument("--verbose", action="store_true", help="Show detailed per-file analysis")
 
     args = parser.parse_args()
 
