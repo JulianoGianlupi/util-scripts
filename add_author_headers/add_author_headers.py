@@ -7,6 +7,7 @@ author (contributor of most substantive lines) and adds standardized comment hea
 
 import argparse
 import configparser
+from datetime import datetime
 import os
 import subprocess
 import sys
@@ -33,7 +34,7 @@ class AuthorInfo:
 class FileAnalysis:
     """Results of analyzing a single file."""
     filepath: str
-    primary_author: Optional[AuthorInfo]
+    authors: list[AuthorInfo]  # All significant authors
     line_count: int
     author_contributions: dict[str, int]  # email -> line count
     existing_header: bool
@@ -181,7 +182,7 @@ def get_author_name_from_git(email: str, repo_root: str) -> str:
         return email.split('@')[0]
 
 
-def parse_git_blame(filepath: str, bot_emails: set[str]) -> dict[str, int]:
+def parse_git_blame(filepath: str, bot_emails: set[str]) -> tuple[dict[str, int], dict[str, int]]:
     """
     Parse git blame output to count substantive lines per author.
 
@@ -193,7 +194,9 @@ def parse_git_blame(filepath: str, bot_emails: set[str]) -> dict[str, int]:
         bot_emails: Set of bot email addresses to exclude
 
     Returns:
-        Dictionary mapping author email -> count of substantive lines
+        Tuple of:
+        - Dictionary mapping author email -> count of substantive lines
+        - Dictionary mapping author email -> most recent commit timestamp (unix)
 
     Raises:
         subprocess.CalledProcessError: If git blame fails
@@ -205,13 +208,18 @@ def parse_git_blame(filepath: str, bot_emails: set[str]) -> dict[str, int]:
     )
 
     author_lines: dict[str, int] = {}
+    author_timestamps: dict[str, int] = {}
     current_author: Optional[str] = None
+    current_timestamp: Optional[int] = None
 
     for line in result.stdout.splitlines():
         # Parse author email from porcelain format
         if line.startswith("author-mail <"):
             email = line[len("author-mail <"):-1]  # Remove < and >
             current_author = email
+
+        elif line.startswith("author-time "):
+            current_timestamp = int(line[len("author-time "):])
 
         elif line.startswith("\t"):
             # This is the actual code line
@@ -225,67 +233,134 @@ def parse_git_blame(filepath: str, bot_emails: set[str]) -> dict[str, int]:
             stripped = code_line.strip()
             if stripped and not stripped.startswith("#"):
                 author_lines[current_author] = author_lines.get(current_author, 0) + 1
+                # Track most recent timestamp per author
+                if current_timestamp is not None:
+                    if current_author not in author_timestamps or current_timestamp > author_timestamps[current_author]:
+                        author_timestamps[current_author] = current_timestamp
 
-    return author_lines
+    return author_lines, author_timestamps
 
 
-def determine_primary_author(author_lines: dict[str, int], templates: dict[str, AuthorInfo],
-                             repo_root: str) -> Optional[AuthorInfo]:
+def determine_authors(
+    author_lines: dict[str, int],
+    author_timestamps: dict[str, int],
+    templates: dict[str, AuthorInfo],
+    repo_root: str,
+    author_filter: Optional[str] = None,
+    strict_authors: bool = False
+) -> tuple[list[AuthorInfo], bool]:
     """
-    Select primary author based on line contributions.
+    Select authors based on line contributions with filtering modes.
+
+    Filtering modes:
+    - Soft mode (strict_authors=False): Return ALL authors if ANY author matches filter.
+      Used to add headers to files you contributed to while keeping all authors listed.
+    - Hard mode (strict_authors=True): Only process files where matching author(s) have
+      >50% of lines, and only return authors matching the filter.
 
     Logic:
-    1. Find author with most substantive lines
-    2. Look up in template dictionary by email
-    3. If found, use template (normalized name/email/note)
-    4. If not found, query git for author name
-    5. Return None if no valid authors
+    1. Sort authors by line count (descending)
+    2. For each author, look up in template dictionary by email
+    3. Substitute {year} in note with most recent commit year
+    4. Apply filtering based on mode
 
     Args:
         author_lines: Email -> line count mapping from git blame
+        author_timestamps: Email -> most recent commit timestamp (unix)
         templates: Email -> AuthorInfo mapping for normalization
         repo_root: Repository root for git queries
+        author_filter: Optional substring to filter author names (case-insensitive)
+        strict_authors: If True, use hard mode filtering (>50% + only matching authors)
 
     Returns:
-        AuthorInfo for primary author, or None if no valid authors
+        Tuple of:
+        - List of AuthorInfo for authors to include in header
+        - Boolean indicating if file should be processed (based on filter criteria)
     """
     if not author_lines:
-        return None
+        return [], False
 
-    # Find author with maximum lines
-    primary_email = max(author_lines, key=lambda x: author_lines[x])
+    # Sort authors by line count descending
+    sorted_emails = sorted(author_lines.keys(), key=lambda x: author_lines[x], reverse=True)
+    total_lines = sum(author_lines.values())
 
-    # Look up in templates for normalized info
-    if primary_email in templates:
-        return templates[primary_email]
+    # Build full author list with AuthorInfo objects
+    all_authors: list[AuthorInfo] = []
+    matching_authors: list[AuthorInfo] = []
+    matching_lines = 0
 
-    # Fallback: create AuthorInfo from git data
-    name = get_author_name_from_git(primary_email, repo_root)
-    return AuthorInfo(name=name, email=primary_email, note=None)
+    for email in sorted_emails:
+        # Get year from most recent commit timestamp
+        year_str = ""
+        if email in author_timestamps:
+            year_str = str(datetime.fromtimestamp(author_timestamps[email]).year)
+
+        # Look up in templates for normalized info
+        if email in templates:
+            template = templates[email]
+            # Substitute {year} in note if present
+            note = template.note
+            if note and "{year}" in note and year_str:
+                note = note.replace("{year}", year_str)
+            author_info = AuthorInfo(name=template.name, email=template.email, note=note)
+        else:
+            # Fallback: create AuthorInfo from git data
+            name = get_author_name_from_git(email, repo_root)
+            author_info = AuthorInfo(name=name, email=email, note=None)
+
+        all_authors.append(author_info)
+
+        # Track which authors match the filter
+        if author_filter and author_filter.lower() in author_info.name.lower():
+            matching_authors.append(author_info)
+            matching_lines += author_lines[email]
+
+    # No filter: return all authors, process file
+    if not author_filter:
+        return all_authors, True
+
+    # No matching authors found: don't process file
+    if not matching_authors:
+        return [], False
+
+    if strict_authors:
+        # Hard mode: only process if matching authors have >50% of lines
+        # Only return matching authors
+        if total_lines > 0 and (matching_lines / total_lines) > 0.5:
+            return matching_authors, True
+        else:
+            return [], False
+    else:
+        # Soft mode: return ALL authors since at least one matches
+        return all_authors, True
 
 
-def generate_header(filepath: str, author: AuthorInfo) -> str:
+def generate_header(filepath: str, authors: list[AuthorInfo]) -> str:
     """
-    Generate Julia comment header for the file.
+    Generate comment header for the file with all authors.
 
     Format:
         # File: filename.jl
         # Author: Name <email>
         # Note: optional note
+        # Author: Name2 <email2>
+        # Note: optional note2
         <blank line>
 
     Args:
         filepath: Path to file (used to extract filename)
-        author: AuthorInfo with name, email, optional note
+        authors: List of AuthorInfo with name, email, optional note
 
     Returns:
         Multi-line string with header and trailing newline
     """
     filename = os.path.basename(filepath)
-    lines = [f"# File: {filename}", f"# Author: {author}"]
+    lines = []
 
-    if author.note:
-        lines.append(f"# {author.note}")
+    for author in authors:
+        lines.append(f"# Author: {author}")
+        if author.note:
+            lines.append(f"# {author.note}")
 
     # Add blank line after header
     lines.append("")
@@ -328,24 +403,33 @@ def insert_header(filepath: str, header: str, dry_run: bool = True) -> bool:
     return True
 
 
-def analyze_file(filepath: str, templates: dict[str, AuthorInfo], bot_emails: set[str], repo_root: str) -> FileAnalysis:
+def analyze_file(
+    filepath: str,
+    templates: dict[str, AuthorInfo],
+    bot_emails: set[str],
+    repo_root: str,
+    author_filter: Optional[str] = None,
+    strict_authors: bool = False
+) -> Optional[FileAnalysis]:
     """
     Analyze a single source file for authorship.
 
     Steps:
     1. Check if header already exists
     2. Run git blame to get author contributions
-    3. Determine primary author
-    4. Create FileAnalysis result
+    3. Determine authors based on filter mode
+    4. Create FileAnalysis result (or None if file should be skipped)
 
     Args:
         filepath: Absolute path to source file
         templates: Author template dictionary
         bot_emails: Set of bot email addresses to exclude
         repo_root: Repository root directory
+        author_filter: Optional substring to filter author names
+        strict_authors: If True, use hard mode filtering (>50% + only matching authors)
 
     Returns:
-        FileAnalysis with results or error info
+        FileAnalysis with results, or None if file should be skipped based on filter
     """
     try:
         # Check for existing header
@@ -358,18 +442,24 @@ def analyze_file(filepath: str, templates: dict[str, AuthorInfo], bot_emails: se
 
         if existing_header:
             return FileAnalysis(
-                filepath=filepath, primary_author=None, line_count=0, author_contributions={}, existing_header=True
+                filepath=filepath, authors=[], line_count=0, author_contributions={}, existing_header=True
             )
 
         # Get git blame data
-        author_lines = parse_git_blame(filepath, bot_emails)
+        author_lines, author_timestamps = parse_git_blame(filepath, bot_emails)
 
-        # Determine primary author
-        primary_author = determine_primary_author(author_lines, templates, repo_root)
+        # Determine authors based on filter mode
+        authors, should_process = determine_authors(
+            author_lines, author_timestamps, templates, repo_root, author_filter, strict_authors
+        )
+
+        # Skip file if filter criteria not met
+        if not should_process:
+            return None
 
         return FileAnalysis(
             filepath=filepath,
-            primary_author=primary_author,
+            authors=authors,
             line_count=sum(author_lines.values()),
             author_contributions=author_lines,
             existing_header=False,
@@ -378,19 +468,18 @@ def analyze_file(filepath: str, templates: dict[str, AuthorInfo], bot_emails: se
 
     except Exception as e:
         return FileAnalysis(
-            filepath=filepath,
-            primary_author=None,
-            line_count=0,
-            author_contributions={},
-            existing_header=False,
-            error=str(e)
+            filepath=filepath, authors=[], line_count=0, author_contributions={}, existing_header=False, error=str(e)
         )
 
 
-def process_files(directory: str,
-                  extensions: list[str],
-                  script_dir: str,
-                  dry_run: bool = True) -> tuple[list[FileAnalysis], list[FileAnalysis]]:
+def process_files(
+    directory: str,
+    extensions: list[str],
+    script_dir: str,
+    dry_run: bool = True,
+    author_filter: Optional[str] = None,
+    strict_authors: bool = False
+) -> tuple[list[FileAnalysis], list[FileAnalysis], int]:
     """
     Process all source files with specified extensions in directory.
 
@@ -399,12 +488,15 @@ def process_files(directory: str,
         extensions: List of file extensions to process (without dots)
         script_dir: Directory containing the script
         dry_run: Whether to actually modify files
+        author_filter: Optional substring to filter author names
+        strict_authors: If True, use hard mode filtering (>50% + only matching authors)
 
     Returns:
-        Tuple of (successful_analyses, failed_analyses)
+        Tuple of (successful_analyses, failed_analyses, skipped_by_filter_count)
     """
     successful: list[FileAnalysis] = []
     failed: list[FileAnalysis] = []
+    skipped_by_filter = 0
 
     # Find git root
     repo_root = find_git_root(directory)
@@ -432,9 +524,14 @@ def process_files(directory: str,
 
     # Analyze each file
     for filepath in sorted(all_files):
-        analysis = analyze_file(filepath, templates, bot_emails, repo_root)
+        analysis = analyze_file(filepath, templates, bot_emails, repo_root, author_filter, strict_authors)
 
-        if analysis.error or (not analysis.primary_author and not analysis.existing_header):
+        # None means file was skipped due to filter criteria
+        if analysis is None:
+            skipped_by_filter += 1
+            continue
+
+        if analysis.error or (not analysis.authors and not analysis.existing_header):
             failed.append(analysis)
         else:
             successful.append(analysis)
@@ -442,11 +539,11 @@ def process_files(directory: str,
     # Apply headers if not dry_run
     if not dry_run:
         for analysis in successful:
-            if not analysis.existing_header:
-                header = generate_header(analysis.filepath, analysis.primary_author)
+            if not analysis.existing_header and analysis.authors:
+                header = generate_header(analysis.filepath, analysis.authors)
                 insert_header(analysis.filepath, header, dry_run=False)
 
-    return successful, failed
+    return successful, failed, skipped_by_filter
 
 
 def preview_changes(analyses: list[FileAnalysis], verbose: bool = False) -> None:
@@ -464,28 +561,20 @@ def preview_changes(analyses: list[FileAnalysis], verbose: bool = False) -> None
                 print("      (already has header)")
             continue
 
-        # Skip if no primary author (defensive check)
-        if not analysis.primary_author:
+        # Skip if no authors (defensive check)
+        if not analysis.authors:
             continue
 
         print(f"\n{'='*70}")
         print(f"File: {analysis.filepath}")
-        print(f"Primary Author: {analysis.primary_author} ({analysis.line_count} substantive lines)")
-
-        # Show other contributors if verbose
-        if verbose and analysis.author_contributions:
-            other_authors = [
-                (email, count)
-                for email, count in sorted(analysis.author_contributions.items(), key=lambda x: x[1], reverse=True)
-                if email != analysis.primary_author.email
-            ]
-            if other_authors:
-                print("Other Contributors:")
-                for email, count in other_authors[:5]:  # Top 5
-                    print(f"  {email} ({count} lines)")
+        print(f"Authors: {len(analysis.authors)} ({analysis.line_count} substantive lines)")
+        for author in analysis.authors:
+            email = author.email or "unknown"
+            lines = analysis.author_contributions.get(email, 0)
+            print(f"  - {author.name} ({lines} lines)")
 
         # Show header preview
-        header = generate_header(analysis.filepath, analysis.primary_author)
+        header = generate_header(analysis.filepath, analysis.authors)
         print("\nHeader to add:")
         for line in header.splitlines():
             print(f"  + {line}" if line else "  +")
@@ -540,6 +629,19 @@ def main() -> int:
     )
     parser.add_argument("--apply", action="store_true", help="Actually modify files (default is dry-run preview)")
     parser.add_argument("--verbose", action="store_true", help="Show detailed per-file analysis")
+    parser.add_argument(
+        "--authors",
+        type=str,
+        help=
+        "Filter by author name (case-insensitive). Soft mode: process files where author has ANY contribution, include ALL authors in header"
+    )
+    parser.add_argument(
+        "--strict-authors",
+        action="store_true",
+        dest="strict_authors",
+        help=
+        "Hard mode: only process files where matching author(s) have >50%% contribution, only include matching authors in header"
+    )
 
     args = parser.parse_args()
 
@@ -557,9 +659,19 @@ def main() -> int:
     print(f"Mode: {'APPLY CHANGES' if args.apply else 'DRY RUN (preview only)'}")
     print(f"Directory: {directory}")
     print(f"Extensions: {', '.join(args.extensions)}")
+    if args.authors:
+        filter_mode = "strict (>50% contribution, matching authors only)" if args.strict_authors else "soft (any contribution, all authors)"
+        print(f"Author filter: {args.authors} ({filter_mode})")
     print(f"{'='*70}\n")
 
-    successful, failed = process_files(directory, args.extensions, script_dir, dry_run=not args.apply)
+    successful, failed, skipped_by_filter = process_files(
+        directory,
+        args.extensions,
+        script_dir,
+        dry_run=not args.apply,
+        author_filter=args.authors,
+        strict_authors=args.strict_authors
+    )
 
     # Display results
     preview_changes(successful, verbose=args.verbose)
@@ -580,6 +692,10 @@ def main() -> int:
     # Already has header
     has_header = [a for a in successful if a.existing_header]
     print_with_breakdown("Already has header", has_header)
+
+    # Skipped by author filter
+    if skipped_by_filter > 0:
+        print(f"Skipped by author filter: {skipped_by_filter}")
 
     # Failed/skipped
     print_with_breakdown("Failed/skipped", failed)

@@ -5,9 +5,14 @@ authors:
   jferrarigian@unither.com:
     name: Juliano Gianlupi
     email: jferrarigian@unither.com
-    note: "Copyright: United Therapeutic Corp."
+    note: "Copyright {year} United Therapeutics Corporation"
+  julianoferrarigianlupi@gmail.com:
+    name: Juliano Gianlupi
+    email: julianoferrarigianlupi@gmail.com
+    note: "Copyright {year} Juliano Ferrari Gianlupi"
 
 # Bot emails to exclude from authorship
 bots:
   - "41898282+github-actions[bot]@users.noreply.github.com"
   - noreply@github.com
+  - not.committed.yet
