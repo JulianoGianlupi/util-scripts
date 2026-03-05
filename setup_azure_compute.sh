@@ -119,6 +119,7 @@ info "GODEBUG=http2client=0 exported in current session"
 
 section "Git LFS Config"
 
+sudo apt install git-lfs
 # Ensure lfs is installed (sets up filters in ~/.gitconfig)
 git lfs install --skip-repo 2>/dev/null && info "git lfs install: OK" || warn "git lfs install failed — is git-lfs installed?"
 
