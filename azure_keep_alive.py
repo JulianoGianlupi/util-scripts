@@ -68,7 +68,8 @@ def sample_resources():
     parts = []
 
     if _PSUTIL:
-        cpu = psutil.cpu_percent(interval=2)  # 2-sec average
+        cpu = psutil.cpu_percent(interval=2, percpu=True)  # 2-sec average
+        cpu = sum(cpu)
         mem = psutil.virtual_memory()
         ram = mem.percent
         parts.append(f"CPU {cpu:.0f}%  RAM {ram:.0f}% ({mem.used/1e9:.1f}/{mem.total/1e9:.1f} GB)")
