@@ -21,6 +21,7 @@ Logs to stdout and keepalive.log.
 import argparse
 import json
 import logging
+import os
 import signal
 import subprocess
 import sys
@@ -90,8 +91,18 @@ def sample_resources():
     return cpu, gpu, ram, "  |  ".join(parts) if parts else "no monitors available"
 
 
-def is_active(cpu, gpu, ram, cpu_thresh, gpu_thresh, ram_thresh):
+def is_active(cpu: float, gpu: float, ram: float, cpu_thresh: float, gpu_thresh: float, ram_thresh: float) -> bool:
     return cpu >= cpu_thresh or gpu >= gpu_thresh or ram >= ram_thresh
+
+
+def is_pid_alive(pid: int) -> bool:
+    if _PSUTIL:
+        return psutil.pid_exists(pid)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +186,8 @@ def main():
     p.add_argument(
         "--ram-thresh", type=float, default=80.0, help="RAM %% above which compute is considered active (default 80)"
     )
+    p.add_argument("--pid", type=int, default=None,
+        help="Monitor a specific PID; keep alive while it runs (overrides resource thresholds)")
     p.add_argument("--check-every", type=int, default=60, help="Seconds between resource checks (default 60)")
     p.add_argument(
         "--idle-grace", type=int, default=300, help="Seconds of continuous true-idleness before quitting (default 300)"
@@ -182,7 +195,10 @@ def main():
     args = p.parse_args()
 
     log.info("=== Azure ML Smart Keep-Alive ===")
-    log.info(f"Thresholds → CPU>{args.cpu_thresh}%  GPU>{args.gpu_thresh}%  RAM>{args.ram_thresh}%")
+    if args.pid is not None:
+        log.info(f"Mode: PID {args.pid}  (resource thresholds ignored for keep-alive decision)")
+    else:
+        log.info(f"Thresholds → CPU>{args.cpu_thresh}%  GPU>{args.gpu_thresh}%  RAM>{args.ram_thresh}%")
     log.info(f"Check every {args.check_every}s  |  Quit after {args.idle_grace}s of true idle")
 
     if not _PSUTIL and not _GPU:
@@ -209,39 +225,67 @@ def main():
 
     while True:
         cpu, gpu, ram, desc = sample_resources()
-        active = is_active(cpu, gpu, ram, args.cpu_thresh, args.gpu_thresh, args.ram_thresh)
 
-        if active:
-            # ---- ACTIVE: make sure kernel is alive ----
-            idle_since = None
+        if args.pid is not None:
+            # ---- PID MODE: liveness determined by process existence ----
+            pid_alive = is_pid_alive(args.pid)
+            pid_tag = f"[pid={args.pid} {'alive' if pid_alive else 'dead'}]"
 
-            if kid is None:
-                log.info(f"[active]  {desc}  → creating kernel")
-                kid = create_kernel(base_url, token)
-            else:
-                alive = ping_kernel(base_url, token, kid)
-                if alive:
-                    log.info(f"[active]  {desc}  → heartbeat OK")
-                else:
-                    log.warning("[active] Kernel lost, recreating…")
+            if pid_alive:
+                idle_since = None
+                if kid is None:
+                    log.info(f"{pid_tag}  {desc}  → creating kernel")
                     kid = create_kernel(base_url, token)
+                else:
+                    alive = ping_kernel(base_url, token, kid)
+                    if alive:
+                        log.info(f"{pid_tag}  {desc}  → heartbeat OK")
+                    else:
+                        log.warning(f"{pid_tag} Kernel lost, recreating…")
+                        kid = create_kernel(base_url, token)
+            else:
+                log.info(f"{pid_tag}  {desc}  → process ended, releasing kernel")
+                if kid:
+                    delete_kernel(base_url, token, kid)
+                    kid = None
+                log.info("=== Keep-Alive exiting (PID ended) ===")
+                return
 
         else:
-            # ---- IDLE: start / continue grace period ----
-            if idle_since is None:
-                idle_since = time.time()
-                log.info(f"[idle]    {desc}  → grace period started ({args.idle_grace}s)")
-            else:
-                idle_for = time.time() - idle_since
-                log.info(f"[idle]    {desc}  → idle for {idle_for:.0f}/{args.idle_grace}s")
+            # ---- THRESHOLD MODE ----
+            active = is_active(cpu, gpu, ram, args.cpu_thresh, args.gpu_thresh, args.ram_thresh)
 
-                if idle_for >= args.idle_grace:
-                    log.info("[idle] Grace period elapsed — releasing kernel, Azure ML may now idle-shutdown.")
-                    if kid:
-                        delete_kernel(base_url, token, kid)
-                        kid = None
-                    log.info("=== Keep-Alive exiting (genuine idle) ===")
-                    return
+            if active:
+                # ---- ACTIVE: make sure kernel is alive ----
+                idle_since = None
+
+                if kid is None:
+                    log.info(f"[active]  {desc}  → creating kernel")
+                    kid = create_kernel(base_url, token)
+                else:
+                    alive = ping_kernel(base_url, token, kid)
+                    if alive:
+                        log.info(f"[active]  {desc}  → heartbeat OK")
+                    else:
+                        log.warning("[active] Kernel lost, recreating…")
+                        kid = create_kernel(base_url, token)
+
+            else:
+                # ---- IDLE: start / continue grace period ----
+                if idle_since is None:
+                    idle_since = time.time()
+                    log.info(f"[idle]    {desc}  → grace period started ({args.idle_grace}s)")
+                else:
+                    idle_for = time.time() - idle_since
+                    log.info(f"[idle]    {desc}  → idle for {idle_for:.0f}/{args.idle_grace}s")
+
+                    if idle_for >= args.idle_grace:
+                        log.info("[idle] Grace period elapsed — releasing kernel, Azure ML may now idle-shutdown.")
+                        if kid:
+                            delete_kernel(base_url, token, kid)
+                            kid = None
+                        log.info("=== Keep-Alive exiting (genuine idle) ===")
+                        return
 
         time.sleep(args.check_every)
 
