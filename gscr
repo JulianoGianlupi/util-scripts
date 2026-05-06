@@ -1,0 +1,5 @@
+ #!/bin/bash
+
+# created by Juliano Ferrari Gianlupi
+
+"$(dirname "$0")/squash_clean_rebase.sh" "$@"
