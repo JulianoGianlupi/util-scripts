@@ -137,9 +137,16 @@ git config --global http.lowSpeedLimit 0
 git config --global http.lowSpeedTime  999999
 info "http.postBuffer set to 500MB"
 info "http.lowSpeedLimit/Time: disabled (prevents timeout on large uploads)"
+# -----------------------------------------------------------------------------
+# 7. other git configs
+# -----------------------------------------------------------------------------
+
+git config --global alias.clone '!git clone --recurse-submodules'
+git config --global alias.subinit 'submodule update --init --recursive'
+git config --global alias.worktree-remove '!git worktree remove --force $@ && git worktree prune'
 
 # -----------------------------------------------------------------------------
-# 7. Summary
+# End. Summary
 # -----------------------------------------------------------------------------
 
 section "Done — Current Config"
