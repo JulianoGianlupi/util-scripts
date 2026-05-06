@@ -8,11 +8,10 @@
 # SB. And finally, the CB is reset to NB.
 
 # check if in git repo
-if [ ! -d .git ]; then
-    echo "Not a Git repository. Quitting."
-    exit 1
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "Not a Git repository. Quitting."
+  exit 1
 fi
-
 SB="$1"
 
 # check if SB is provided
