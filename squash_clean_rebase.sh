@@ -7,6 +7,8 @@
 # single commit in NB. NB is then rebased onto the
 # SB. And finally, the CB is reset to NB.
 
+# TODO: add non-squash option
+
 # check if in git repo
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
   echo "Not a Git repository. Quitting."

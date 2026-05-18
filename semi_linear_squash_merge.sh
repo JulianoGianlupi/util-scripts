@@ -16,11 +16,11 @@
 ################################################################################
 
 # Check if in git repo
-if [ ! -d .git ]; then
-    echo "Not a Git repository. Quitting."
-    exit 1
+if ! git rev-parse --git-dir > /dev/null 2>&1; then
+  echo "not a git repository. quitting."
+  exit 1
 fi
-
+s
 # Set source branch and target branch
 SOURCE="$1"
 TARGET="$2"
