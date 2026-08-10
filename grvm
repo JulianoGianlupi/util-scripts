@@ -1,4 +1,4 @@
 #!/bin/bash
 
-"(dirname "$0")/git-rebase-via-merge/git-rebase-via-merge.sh" "$@"
+"$(dirname "$0")/git-rebase-via-merge/git-rebase-via-merge.sh" "$@"
 

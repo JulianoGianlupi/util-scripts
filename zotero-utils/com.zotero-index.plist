@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.zotero-index.plist
+  LaunchAgent that watches ~/Zotero/library.json with macOS FSEvents and
+  re-runs zotero_to_index.sh whenever the file is modified.
+
+  Install (one-liner — substitutes your real home path into WatchPaths):
+    sed "s|ZOTERO_LIBRARY_PATH|$HOME/Zotero/library.json|" \
+      com.zotero-index.plist > ~/Library/LaunchAgents/com.zotero-index.plist
+    launchctl load ~/Library/LaunchAgents/com.zotero-index.plist
+
+  Uninstall:
+    launchctl unload ~/Library/LaunchAgents/com.zotero-index.plist
+
+  Check logs:
+    tail -f /tmp/zotero-index.log
+-->
+<plist version="1.0">
+<dict>
+
+  <!-- Unique reverse-DNS label for this agent -->
+  <key>Label</key>
+  <string>com.zotero-index</string>
+
+  <!-- The command to run.
+       We use bash -c with $HOME so paths work for any username. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>-c</string>
+    <string>"$HOME/Zotero/zotero_to_index.sh" "$HOME/Zotero/library.json" "$HOME/Zotero/library_index.json"</string>
+  </array>
+
+  <!-- FSEvents watch: launchd re-launches the job whenever this PATH changes.
+       This is much better than polling — zero CPU between updates.
+       NOTE: launchd does not expand $HOME here, so you must substitute your
+       real home directory. The install command below handles this automatically. -->
+  <key>WatchPaths</key>
+  <array>
+    <string>ZOTERO_LIBRARY_PATH</string>
+  </array>
+
+  <!-- Throttle: if Zotero writes the file many times in quick succession
+       (e.g. during a big sync), wait at least this many seconds before
+       firing again. BBT's autoExportDelay is 5 s, so 10 s is a safe buffer. -->
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
+  <!-- Run once at login so the index is fresh after a reboot -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Redirect stdout/stderr to a single log file -->
+  <key>StandardOutPath</key>
+  <string>/tmp/zotero-index.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/zotero-index.log</string>
+
+  <!-- Keep the agent alive across crashes -->
+  <key>KeepAlive</key>
+  <false/>
+
+</dict>
+</plist>

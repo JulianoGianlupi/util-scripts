@@ -1,0 +1,4 @@
+#!/bin/bash
+
+"$(dirname "$0")/git_machete_no_slide.sh" "$@"
+
